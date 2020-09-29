@@ -61,6 +61,8 @@ use bpf_sys::{
 };
 use goblin::elf::{reloc::RelocSection, section_header as hdr, Elf, SectionHeader, Sym};
 pub use maps::*;
+pub use maps::hash_map::*;
+pub use maps::array_map::*;
 
 use libc::pid_t;
 use std::collections::HashMap as RSHashMap;

@@ -280,15 +280,4 @@ impl<K, V> ArrayMap<K, V> {
             );
         }
     }
-
-    /// Delete the entry indexed by `key`
-    #[inline]
-    pub fn delete(&mut self, key: &K) {
-        unsafe {
-            bpf_map_delete_elem(
-                &mut self.def as *mut _ as *mut c_void,
-                key as *const _ as *const c_void,
-            );
-        }
-    }
 }
