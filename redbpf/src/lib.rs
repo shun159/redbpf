@@ -63,6 +63,7 @@ use goblin::elf::{reloc::RelocSection, section_header as hdr, Elf, SectionHeader
 pub use maps::*;
 pub use maps::hash_map::*;
 pub use maps::array_map::*;
+pub use maps::percpu_array_map::*;
 
 use libc::pid_t;
 use std::collections::HashMap as RSHashMap;
