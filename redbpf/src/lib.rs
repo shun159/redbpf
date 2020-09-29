@@ -48,6 +48,7 @@ pub mod cpus;
 mod error;
 #[cfg(feature = "load")]
 pub mod load;
+mod maps;
 mod perf;
 mod symbols;
 pub mod sys;
@@ -55,19 +56,18 @@ pub mod xdp;
 
 pub use bpf_sys::uname;
 use bpf_sys::{
-    bpf_insn, bpf_map_def, bpf_probe_attach_type, bpf_probe_attach_type_BPF_PROBE_ENTRY,
+    bpf_insn, bpf_probe_attach_type, bpf_probe_attach_type_BPF_PROBE_ENTRY,
     bpf_probe_attach_type_BPF_PROBE_RETURN, bpf_prog_type,
 };
 use goblin::elf::{reloc::RelocSection, section_header as hdr, Elf, SectionHeader, Sym};
+pub use maps::*;
 
 use libc::pid_t;
 use std::collections::HashMap as RSHashMap;
 use std::ffi::CString;
 use std::fs;
 use std::io;
-use std::marker::PhantomData;
 use std::mem;
-use std::mem::MaybeUninit;
 use std::os::unix::io::RawFd;
 
 pub use crate::error::{Error, Result};
@@ -132,25 +132,6 @@ pub struct TracePoint {
 pub struct XDP {
     common: ProgramData,
     interfaces: Vec<String>,
-}
-
-pub struct Map {
-    pub name: String,
-    pub kind: u32,
-    fd: RawFd,
-    config: bpf_map_def,
-}
-
-pub struct HashMap<'a, K: Clone, V: Clone> {
-    base: &'a Map,
-    _k: PhantomData<K>,
-    _v: PhantomData<V>,
-}
-
-pub struct ArrayMap<'a, K: Clone, V: Clone> {
-    base: &'a Map,
-    _k: PhantomData<K>,
-    _v: PhantomData<V>,
 }
 
 #[allow(dead_code)]
@@ -689,247 +670,6 @@ impl Rel {
         code[insn_idx].imm = map.fd;
 
         Ok(())
-    }
-}
-
-impl Map {
-    pub fn load(name: &str, code: &[u8]) -> Result<Map> {
-        let config: bpf_map_def = *zero::read(code);
-        let cname = CString::new(name.to_owned())?;
-        let fd = unsafe {
-            bpf_sys::bcc_create_map(
-                config.type_,
-                cname.as_ptr(),
-                config.key_size as i32,
-                config.value_size as i32,
-                config.max_entries as i32,
-                config.map_flags as i32,
-            )
-        };
-        if fd < 0 {
-            return Err(Error::Map);
-        }
-
-        Ok(Map {
-            name: name.to_string(),
-            kind: config.type_,
-            fd,
-            config,
-        })
-    }
-}
-
-impl<'base, K: Clone, V: Clone> HashMap<'base, K, V> {
-    pub fn new<'a>(base: &'a Map) -> Result<HashMap<'a, K, V>> {
-        if mem::size_of::<K>() != base.config.key_size as usize
-            || mem::size_of::<V>() != base.config.value_size as usize
-        {
-            return Err(Error::Map);
-        }
-
-        Ok(HashMap {
-            base,
-            _k: PhantomData,
-            _v: PhantomData,
-        })
-    }
-
-    pub fn set(&self, mut key: K, mut value: V) {
-        unsafe {
-            bpf_sys::bpf_update_elem(
-                self.base.fd,
-                &mut key as *mut _ as *mut _,
-                &mut value as *mut _ as *mut _,
-                0,
-            );
-        }
-    }
-
-    pub fn get(&self, mut key: K) -> Option<V> {
-        let mut value = MaybeUninit::zeroed();
-        if unsafe {
-            bpf_sys::bpf_lookup_elem(
-                self.base.fd,
-                &mut key as *mut _ as *mut _,
-                &mut value as *mut _ as *mut _,
-            )
-        } < 0
-        {
-            return None;
-        }
-        Some(unsafe { value.assume_init() })
-    }
-
-    pub fn delete(&self, mut key: K) {
-        unsafe {
-            bpf_sys::bpf_delete_elem(self.base.fd, &mut key as *mut _ as *mut _);
-        }
-    }
-
-    pub fn iter<'a>(&'a self) -> MapIter<'a, '_, K, V> {
-        MapIter {
-            map: self,
-            key: None,
-        }
-    }
-}
-
-impl<'base, K: Clone, V: Clone> ArrayMap<'base, K, V> {
-    pub fn new<'a>(base: &'a Map) -> Result<ArrayMap<'a, K, V>> {
-        if mem::size_of::<K>() != base.config.key_size as usize
-            || mem::size_of::<V>() != base.config.value_size as usize
-        {
-            return Err(Error::Map);
-        }
-
-        Ok(ArrayMap {
-            base,
-            _k: PhantomData,
-            _v: PhantomData,
-        })
-    }
-
-    pub fn set(&self, mut key: K, mut value: V) {
-        unsafe {
-            bpf_sys::bpf_update_elem(
-                self.base.fd,
-                &mut key as *mut _ as *mut _,
-                &mut value as *mut _ as *mut _,
-                0,
-            );
-        }
-    }
-
-    pub fn get(&self, mut key: K) -> Option<V> {
-        let mut value = MaybeUninit::zeroed();
-        if unsafe {
-            bpf_sys::bpf_lookup_elem(
-                self.base.fd,
-                &mut key as *mut _ as *mut _,
-                &mut value as *mut _ as *mut _,
-            )
-        } < 0
-        {
-            return None;
-        }
-        Some(unsafe { value.assume_init() })
-    }
-
-    pub fn delete(&self, mut key: K) {
-        unsafe {
-            bpf_sys::bpf_delete_elem(self.base.fd, &mut key as *mut _ as *mut _);
-        }
-    }
-
-    pub fn iter<'a>(&'a self) -> ArrayMapIter<'a, '_, K, V> {
-        ArrayMapIter {
-            map: self,
-            key: None,
-        }
-    }
-}
-
-pub struct MapIter<'a, 'b, K: Clone, V: Clone> {
-    map: &'a HashMap<'b, K, V>,
-    key: Option<K>,
-}
-
-impl<K: Clone, V: Clone> Iterator for MapIter<'_, '_, K, V> {
-    type Item = (K, V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let key = self.key.take();
-        self.key = match key {
-            Some(mut key) => {
-                let mut next_key = MaybeUninit::<K>::zeroed();
-                let ret = unsafe {
-                    bpf_sys::bpf_get_next_key(
-                        self.map.base.fd,
-                        &mut key as *mut _ as *mut _,
-                        &mut next_key as *mut _ as *mut _,
-                    )
-                };
-                if ret < 0 {
-                    None
-                } else {
-                    Some(unsafe { next_key.assume_init() })
-                }
-            }
-            None => {
-                let mut key = MaybeUninit::<K>::zeroed();
-                if unsafe {
-                    bpf_sys::bpf_get_first_key(
-                        self.map.base.fd,
-                        &mut key as *mut _ as *mut _,
-                        self.map.base.config.key_size.into(),
-                    )
-                } < 0
-                {
-                    None
-                } else {
-                    Some(unsafe { key.assume_init() })
-                }
-            }
-        };
-
-        if self.key.is_none() {
-            return None;
-        }
-
-        let key = self.key.clone().unwrap();
-        Some((key.clone(), self.map.get(key).unwrap()))
-    }
-}
-
-pub struct ArrayMapIter<'a, 'b, K: Clone, V: Clone> {
-    map: &'a ArrayMap<'b, K, V>,
-    key: Option<K>,
-}
-
-impl<K: Clone, V: Clone> Iterator for ArrayMapIter<'_, '_, K, V> {
-    type Item = (K, V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let key = self.key.take();
-        self.key = match key {
-            Some(mut key) => {
-                let mut next_key = MaybeUninit::<K>::zeroed();
-                let ret = unsafe {
-                    bpf_sys::bpf_get_next_key(
-                        self.map.base.fd,
-                        &mut key as *mut _ as *mut _,
-                        &mut next_key as *mut _ as *mut _,
-                    )
-                };
-                if ret < 0 {
-                    None
-                } else {
-                    Some(unsafe { next_key.assume_init() })
-                }
-            }
-            None => {
-                let mut key = MaybeUninit::<K>::zeroed();
-                if unsafe {
-                    bpf_sys::bpf_get_first_key(
-                        self.map.base.fd,
-                        &mut key as *mut _ as *mut _,
-                        self.map.base.config.key_size.into(),
-                    )
-                } < 0
-                {
-                    None
-                } else {
-                    Some(unsafe { key.assume_init() })
-                }
-            }
-        };
-
-        if self.key.is_none() {
-            return None
-        }
-
-        let key = self.key.clone().unwrap();
-        Some((key.clone(), self.map.get(key).unwrap()))
     }
 }
 
