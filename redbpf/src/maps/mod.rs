@@ -1,6 +1,7 @@
 pub mod hash_map;
 pub mod array_map;
 pub mod percpu_array_map;
+pub mod lpm_trie_map;
 
 pub use crate::error::{Error, Result};
 use bpf_sys::{bcc_create_map, bpf_map_def};

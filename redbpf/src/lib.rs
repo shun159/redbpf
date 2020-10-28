@@ -64,6 +64,7 @@ pub use maps::*;
 pub use maps::hash_map::*;
 pub use maps::array_map::*;
 pub use maps::percpu_array_map::*;
+pub use maps::lpm_trie_map::*;
 
 use libc::pid_t;
 use std::collections::HashMap as RSHashMap;

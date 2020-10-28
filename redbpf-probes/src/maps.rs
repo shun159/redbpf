@@ -12,6 +12,7 @@ Maps are a generic data structure for storage of different types of data.
 They allow sharing of data between eBPF kernel programs, and also between
 kernel and user-space code.
  */
+
 use core::default::Default;
 use core::marker::PhantomData;
 use core::convert::TryInto;
@@ -346,6 +347,87 @@ impl<K, V> PerCPUArrayMap<K, V> {
             bpf_map_update_elem(
                 &mut self.def as *mut _ as *mut c_void,
                 key as *const _ as *const c_void,
+                value as *const _ as *const c_void,
+                BPF_ANY.into(),
+            );
+        }
+    }
+}
+
+/// LPM(Longest Patten Match) trie map.
+///
+/// High level API for BPF_MAP_TYPE_LPM_TRIE maps.
+#[repr(transparent)]
+pub struct LPMTrieMap<K, V> {
+    def: bpf_map_def,
+    _k: PhantomData<K>,
+    _v: PhantomData<V>
+}
+
+#[repr(C)]
+pub struct LPMKey<'a> {
+    prefix: u32,
+    bytes: &'a [u8]
+}
+
+impl<K, V> LPMTrieMap<K, V> {
+    /// Creates a map with specified maximum number of elements.
+    pub const fn with_max_entries(key_size: u32, max_entries: u32) -> Self {
+        Self {
+            def: bpf_map_def {
+                type_: bpf_map_type_BPF_MAP_TYPE_LPM_TRIE,
+                key_size: key_size,
+                value_size: mem::size_of::<V>() as u32,
+                max_entries,
+                map_flags: 0
+            },
+            _k: PhantomData,
+            _v: PhantomData,
+        }
+    }
+
+    /// Returns a reference to the value corresponding to the key.
+    #[inline]
+    pub fn get(&mut self, key_bytes: &[u8], prefix: u32) -> Option<&V> {
+        unsafe {
+            let lpm_key = &LPMKey {prefix: prefix, bytes: key_bytes};
+            let value = bpf_map_lookup_elem(
+                &mut self.def as *mut _ as *mut c_void,
+                lpm_key as *const _ as *const c_void,
+            );
+            if value.is_null() {
+                None
+            } else {
+                Some(&*(value as *const V))
+            }
+        }
+    }
+
+    /// Returns a reference to the value corresponding to the key.
+    #[inline]
+    pub fn get_mut(&mut self, key_bytes: &[u8], prefix: u32) -> Option<&mut V> {
+        unsafe {
+            let lpm_key = &LPMKey {prefix: prefix, bytes: key_bytes};
+            let value = bpf_map_lookup_elem(
+                &mut self.def as *mut _ as *mut c_void,
+                lpm_key as *const _ as *const c_void,
+            );
+            if value.is_null() {
+                None
+            } else {
+                Some(&mut *(value as *mut V))
+            }
+        }
+    }
+
+    /// Set the `value` in the map for `key`
+    #[inline]
+    pub fn set(&mut self, key_bytes: &[u8], prefix: u32, value: &V) {
+        unsafe {
+            let lpm_key = &LPMKey {prefix: prefix, bytes: key_bytes};
+            bpf_map_update_elem(
+                &mut self.def as *mut _ as *mut c_void,
+                lpm_key as *const _ as *const c_void,
                 value as *const _ as *const c_void,
                 BPF_ANY.into(),
             );

@@ -16,6 +16,6 @@ pub use cty::*;
 pub use redbpf_macros::{map, program, xdp};
 pub use crate::bindings::*;
 pub use crate::helpers::*;
-pub use crate::maps::{HashMap, PerfMapFlags, ArrayMap, PerCPUArrayMap};
+pub use crate::maps::{HashMap, PerfMapFlags, ArrayMap, PerCPUArrayMap, LPMTrieMap};
 pub use crate::net::*;
 pub use crate::xdp::*;
